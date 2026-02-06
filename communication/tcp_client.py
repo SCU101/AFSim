@@ -15,6 +15,7 @@ class SimulationClient:
         # 油门范围是[0,1]，其他范围是[-1,1]
 
     def connection(self, scenario):
+        """单次通信仿真步长是16ms"""
         try:
             self.scenario = scenario
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -33,10 +34,6 @@ class SimulationClient:
                 is_ready, _ = self.wait_for_platform_ready(target_id)
                 if not is_ready:
                     return
-            step_params = {
-                "actions": {"0": {"objID": self.target_ids[0], "vals": self.init_actions[0]}}
-            }
-            resp = self.send_request("step", step_params)
             return resp
 
         except ConnectionRefusedError:
@@ -51,6 +48,13 @@ class SimulationClient:
         }
         resp = self.send_request("step", step_params)
         return resp
+
+    def reset(self):
+        try:
+            self.send_request("reset", {"env_ids": [0]})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     def close(self):
         try:
@@ -114,7 +118,8 @@ class SimulationClient:
 if __name__ == "__main__":
     simulation = SimulationClient(host='127.0.0.1', port=8888)
     observation = simulation.connection(scenario="testWzz")
-    for i in range(10):
-        print(observation)
+    for i in range(100):
         observation = simulation.get_environment_data([[0.5, 0.0, 0.0, 1.0]])
+    simulation.reset()
+    observation = simulation.get_environment_data([[0.5, 0.0, 0.0, 1.0]])
     simulation.close()
