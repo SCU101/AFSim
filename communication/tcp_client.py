@@ -5,13 +5,14 @@ import time
 
 
 class SimulationClient:
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, steps: int = 1):
         self.host = host
         self.port = port
         self.socket = None
         self.scenario = None
         self.target_ids = None
         self.init_actions = None  # 升降舵、副翼、方向舵、油门
+        self.steps = steps
         # 油门范围是[0,1]，其他范围是[-1,1]
 
     def connection(self, scenario):
@@ -44,6 +45,7 @@ class SimulationClient:
 
     def get_environment_data(self, actions):
         step_params = {
+            "steps": self.steps,
             "actions": {"0": {"objID": self.target_ids[0], "vals": actions[0]}}
         }
         resp = self.send_request("step", step_params)
@@ -116,10 +118,11 @@ class SimulationClient:
 
 
 if __name__ == "__main__":
-    simulation = SimulationClient(host='127.0.0.1', port=8888)
+    simulation = SimulationClient(host='127.0.0.1', port=8888, steps=60)
     observation = simulation.connection(scenario="testWzz")
     for i in range(100):
         observation = simulation.get_environment_data([[0.5, 0.0, 0.0, 1.0]])
+        print(observation)
     simulation.reset()
     observation = simulation.get_environment_data([[0.5, 0.0, 0.0, 1.0]])
     simulation.close()
