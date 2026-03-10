@@ -308,7 +308,7 @@ class PointTrackingEnv(gym.Env):
 
             # 初始化（如果是第一次调用）
             if not hasattr(self, '_base_time'):
-                self._base_time = datetime(2024, 9, 4, 21, 23, 28)  # 使用示例中的基准时间
+                self._base_time = datetime.now()
                 self._frame_count = 0
                 self._platform_ids = {'1001': '5160'}  # 根据你的数据分配ID
 
