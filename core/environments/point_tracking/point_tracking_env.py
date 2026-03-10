@@ -3,8 +3,9 @@ from gymnasium import spaces
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from utils.tools import RAMathUtil
-import math
+import math, os, json
 from communication.tcp_client import SimulationClient
+from datetime import datetime, timedelta
 
 
 class PointTrackingEnv(gym.Env):
@@ -28,6 +29,8 @@ class PointTrackingEnv(gym.Env):
         self.max_steps = max_steps
         self.render_mode = render_mode
         self.current_step = 0
+        self.action_pre = np.zeros(4)
+        self.observation = None
 
         # 定义动作空间：连续动作，控制点的移动 [x, y, z, 其他参数?]
         # 根据你的仿真平台调整维度
@@ -44,7 +47,7 @@ class PointTrackingEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(10,),  # 根据实际观测维度调整
+            shape=(14,),  # 根据实际观测维度调整
             dtype=np.float64
         )
 
@@ -77,7 +80,8 @@ class PointTrackingEnv(gym.Env):
 
         state = np.array([delta_x, delta_y, delta_z, plane_info["heading"],
                           plane_info["pitch"], plane_info["roll"], plane_info["speed"],
-                          plane_info["vx"], plane_info["vy"], plane_info["vz"]], dtype=np.float64)
+                          plane_info["vx"], plane_info["vy"], plane_info["vz"],
+                          self.action_pre[0], self.action_pre[1], self.action_pre[2], self.action_pre[3], ], dtype=np.float64)
         return np.array(state)
 
     def _calculate_reward(self, observation, state) -> float:
@@ -97,13 +101,13 @@ class PointTrackingEnv(gym.Env):
 
         # 奖励函数设计
         # 1. 距离惩罚（负奖励）
-        distance_penalty = -distance * 0.0001
+        distance_penalty = -distance * 0.00002
 
         # 2. 成功到达目标的奖励
-        success_reward = 10.0 if distance < 500 else 0.0
+        success_reward = 10.0 if distance < 1000 else 0.0
 
         # 3. 时间惩罚（鼓励快速到达）
-        time_penalty = -0.01
+        time_penalty = -0.002
 
         # 4. 平滑性奖励（可选，需要速度信息）
         # velocity = observation[3:6]
@@ -158,7 +162,7 @@ class PointTrackingEnv(gym.Env):
 
         return False
 
-    def step(self, action: np.ndarray, slice: int = 60) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: np.ndarray, slice: int = 1) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
         执行一步动作
 
@@ -170,9 +174,11 @@ class PointTrackingEnv(gym.Env):
         """
         # 确保动作在合法范围内
         action = np.clip(action, self.action_space.low, self.action_space.high)
+        self.action_pre = action
         for i in range(slice):
             # 连续多少帧再重新生成一个新的动作
             observation = self.simulation.get_environment_data([action.tolist()])
+            self.observation = observation
 
         # 处理观测
         state = self._process_observation(observation)
@@ -182,6 +188,8 @@ class PointTrackingEnv(gym.Env):
 
         # 检查是否终止和截断
         terminated = self._check_terminated(observation, state)
+        if terminated:
+            print(reward)
         truncated = self._check_truncated(observation, state)
 
         # 更新步数
@@ -222,6 +230,8 @@ class PointTrackingEnv(gym.Env):
         # 从options中获取参数
         scenario = "testWzz"
         target_position = None
+        self.observation = None
+        self.reset_logs()
 
         if options is not None:
             scenario = options.get("scenario", "testWzz")
@@ -237,6 +247,7 @@ class PointTrackingEnv(gym.Env):
 
         # 传入默认初始动作
         observation = self.simulation.get_environment_data([[0.5, 0.0, 0.0, 1.0]])
+        self.observation = observation
 
         # 设置新的目标位置
         if target_position is not None:
@@ -273,17 +284,92 @@ class PointTrackingEnv(gym.Env):
 
         return state, info
 
-    def render(self):
+    def render(self, output_dir='logs', output_file='fighter.acmi'):
         """
-        渲染环境（可选）待完成
+        简化的render方法，精确匹配提供的ACMI格式
         """
-        pass
-        # if self.render_mode == "human":
-        #     # 这里可以添加可视化代码
-        #     print(f"Step: {self.current_step}, Reward: {self.episode_reward:.2f}")
-        # elif self.render_mode is not None:
-        #     # Gymnasium要求如果render_mode不为None，必须实现render方法
-        #     raise NotImplementedError(f"Render mode '{self.render_mode}' is not supported.")
+        output_path = os.path.join(output_dir, output_file)
+
+        if not hasattr(self, 'observation') or self.observation is None:
+            return None
+
+        try:
+            # 解析数据
+            if isinstance(self.observation, str):
+                data = json.loads(self.observation)
+            else:
+                data = self.observation
+
+            platforms = data.get('data', {}).get('0', {}).get('obs', {}).get('platforms', [])
+            sim_time = data.get('data', {}).get('0', {}).get('obs', {}).get('sim_time', 0)
+
+            if not platforms:
+                return None
+
+            # 初始化（如果是第一次调用）
+            if not hasattr(self, '_base_time'):
+                self._base_time = datetime(2024, 9, 4, 21, 23, 28)  # 使用示例中的基准时间
+                self._frame_count = 0
+                self._platform_ids = {'1001': '5160'}  # 根据你的数据分配ID
+
+            # 以追加模式打开文件
+            with open(output_path, 'a', encoding='utf-8') as f:
+                # 如果是新文件，写入头信息
+                if self._frame_count == 0:
+                    f.write("FileType=text/acmi/tacview\n")
+                    f.write("FileVersion=2.2\n")
+                    f.write(f"0,ReferenceTime={self._base_time.strftime('%Y-%m-%dT%H:%M:%S')}Z\n")
+
+                # 写入时间戳
+                f.write(f"#{sim_time:.2f}\n")
+
+                # 为每个平台写入数据
+                for i, platform in enumerate(platforms):
+                    name = platform.get('name', '1001')
+
+                    # 获取ID映射
+                    if name in self._platform_ids:
+                        object_id = self._platform_ids[name]
+                    else:
+                        object_id = str(5160 + i)
+                        self._platform_ids[name] = object_id
+
+                    # 获取数据
+                    lat = platform.get('lat', 0)
+                    lon = platform.get('lon', 0)
+                    alt = platform.get('alt', 0)
+                    roll = platform.get('roll', 0)
+                    pitch = platform.get('pitch', 0)
+                    heading = platform.get('heading', 0)
+
+                    # 构建数据行
+                    # 格式: ID,T=时间戳|经度|纬度|高度|滚转|俯仰|偏航,Name=名称,Type=类型,CallSign=呼号,Color=颜色
+                    data_line = (f"{object_id},T={lon:.8f}|{lat:.8f}|{alt:.2f}|"
+                                 f"{roll:.12f}|{pitch:.12f}|{heading:.6f},"
+                                 f"Name=F-16,Type=Air+FixedWing,CallSign=F-16,Color=Red")
+
+                    f.write(data_line + "\n")
+
+                self._frame_count += 1
+
+            return output_path
+
+        except Exception as e:
+            print(f"错误: {e}")
+            return None
+
+    def reset_logs(self, output_dir='logs', output_file='fighter.acmi'):
+        # 确保输出目录存在
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"创建目录: {output_dir}")
+        # 构建完整的输出文件路径
+        output_path = os.path.join(output_dir, output_file)
+
+        # 如果文件已存在，先删除
+        if os.path.exists(output_path):
+            os.remove(output_path)
+            print(f"删除已存在的文件: {output_path}")
 
     def close(self):
         """
@@ -296,13 +382,13 @@ class PointTrackingEnv(gym.Env):
 # 使用示例
 if __name__ == "__main__":
     # 1. 创建环境（Gymnasium版本）
-    simulation = SimulationClient(host='127.0.0.1', port=8888)
-    env = PointTrackingEnv(simulation_client=simulation, max_steps=200, render_mode="human")
+    simulation = SimulationClient(host='127.0.0.1', port=8888, steps=1)
+    env = PointTrackingEnv(simulation_client=simulation, max_steps=2000, render_mode="human")
 
     # 重置环境，现在返回两个值
     state, info = env.reset()
 
-    for i in range(1000):
+    for i in range(2000):
         action = np.array([0.5, 0.0, 0.0, 1.0])
         # Gymnasium的step返回5个值
         state, reward, terminated, truncated, info = env.step(action)
@@ -312,6 +398,7 @@ if __name__ == "__main__":
 
         if done:
             print(f"Episode ended: reward={reward}, terminated={terminated}, truncated={truncated}")
-            state, info = env.reset()
+            # state, info = env.reset()
+            break
 
     env.close()
