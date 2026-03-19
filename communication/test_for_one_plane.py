@@ -94,7 +94,8 @@ def main():
 
         for i in range(1, 51):
             step_params = {
-                "actions": { "0": { "objID": TARGET_ID, "vals": action_vals } }
+                "steps": 1,
+                "actions": { "0": { TARGET_ID: action_vals } }
             }
 
             start_t = time.time()

@@ -28,6 +28,9 @@ class SimulationClient:
             if scenario == "testWzz":
                 self.target_ids = ["1001"]
                 self.init_actions = [[0.5, 0.0, 0.0, 1.0]]  # 升降舵、副翼、方向舵、油门
+            elif scenario == "test1v1":
+                self.target_ids = ["1001", "5001"]
+                self.init_actions = [[0.5, 0.0, 0.0, 1.0], [0.5, 0.0, 0.0, 1.0]]  # 两架飞机的初始动作
             else:
                 self.target_ids = []
                 self.init_actions = [[0.5, 0.0, 0.0, 1.0]]  # 升降舵、副翼、方向舵、油门
@@ -44,10 +47,21 @@ class SimulationClient:
             traceback.print_exc()
 
     def get_environment_data(self, actions):
-        step_params = {
-            "steps": self.steps,
-            "actions": {"0": {"objID": self.target_ids[0], "vals": actions[0]}}
-        }
+        if len(self.target_ids) == 1:
+            step_params = {
+                "steps": self.steps,
+                "actions": {"0": {self.target_ids[0]: actions[0]}}
+            }
+        elif len(self.target_ids) == 2:
+            step_params = {
+                "steps": self.steps,
+                "actions": {"0": {self.target_ids[0]: actions[0], self.target_ids[1]: actions[1]}}
+            }
+        else:
+            step_params = {
+                "steps": self.steps,
+                "actions": {"0": {}}
+            }
         resp = self.send_request("step", step_params)
         return resp
 
